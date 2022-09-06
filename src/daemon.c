@@ -10,6 +10,7 @@
 #include <pwd.h>
 #include <grp.h>
 #include <libgen.h>
+#include <sys/file.h>
 
 #include "memory.h"
 #include "daemon.h"
@@ -68,6 +69,17 @@ void write_pid(const char *pid_file, const char *user, const char *group) {
     nchown(pid_dir, user, group);
     free(pid_dir);
 
+    // before check if pidfile exists: if it's NOT locked the process is dead
+    if ((f = open(pid_file, O_RDONLY)) >= 0) {
+        // lockfile exists: check lock
+        if (flock(f, LOCK_EX | LOCK_NB) != 0) {
+            panic("PID file existing and locked");
+        }
+        // Lock successful: the owner is dead, remove lockfile
+        close(f);
+        unlink(pid_file);
+    }
+
     if ((f = open(pid_file, O_CREAT | O_EXCL | O_WRONLY, 00644)) < 0) {
         if (errno == EEXIST) {
             panic("PID file already exists");
@@ -83,7 +95,11 @@ void write_pid(const char *pid_file, const char *user, const char *group) {
         panic("Could not write to PID file");
     }
 
-	close(f);
+    if (flock(f, LOCK_EX | LOCK_NB) != 0) {
+        panic("Can't lock PID file");
+    }
+    // DON'T close(f) to retain the lock till the program is running
+	//close(f);
 }
 
 void drop_privileges(const char *user, const char *group) {
